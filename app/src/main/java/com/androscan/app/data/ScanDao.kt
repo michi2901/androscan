@@ -17,6 +17,12 @@ interface ScanDao {
     @Query("SELECT COUNT(*) FROM scan_entries")
     fun count(): Flow<Int>
 
+    @Query("UPDATE scan_entries SET sentByMail = 1")
+    suspend fun markAllSentByMail()
+
+    @Query("DELETE FROM scan_entries WHERE capturedAt < :cutoffMillis")
+    suspend fun deleteOlderThan(cutoffMillis: Long)
+
     @Query("DELETE FROM scan_entries")
     suspend fun deleteAll()
 }

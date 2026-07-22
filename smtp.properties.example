@@ -1,0 +1,7 @@
+# Copy to smtp.properties (gitignored) and fill in values.
+smtp.host=bsmtp.a1.net
+smtp.port=587
+smtp.user=
+smtp.password=
+smtp.from=
+smtp.to=

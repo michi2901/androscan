@@ -1,8 +1,20 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+}
+
+fun quoteBuildConfig(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+val smtpProperties = Properties().apply {
+    val file = rootProject.file("smtp.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -13,9 +25,40 @@ android {
         applicationId = "com.androscan.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField(
+            "String",
+            "SMTP_HOST",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.host", ""))
+        )
+        buildConfigField(
+            "String",
+            "SMTP_PORT",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.port", "587"))
+        )
+        buildConfigField(
+            "String",
+            "SMTP_USER",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.user", ""))
+        )
+        buildConfigField(
+            "String",
+            "SMTP_PASSWORD",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.password", ""))
+        )
+        buildConfigField(
+            "String",
+            "SMTP_FROM",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.from", ""))
+        )
+        buildConfigField(
+            "String",
+            "SMTP_TO",
+            quoteBuildConfig(smtpProperties.getProperty("smtp.to", ""))
+        )
     }
 
     buildTypes {
@@ -39,11 +82,14 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            pickFirsts += "META-INF/LICENSE.md"
+            pickFirsts += "META-INF/NOTICE.md"
         }
     }
 }
@@ -75,12 +121,16 @@ dependencies {
     // ML Kit Barcode
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
-    // Room
-    val roomVersion = "2.6.1"
+    // Room (2.7+ required for KSP2 / Kotlin 2.2 — fixes "unexpected jvm signature V")
+    val roomVersion = "2.8.4"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
     // Permissions
     implementation("com.google.accompanist:accompanist-permissions:0.36.0")
+
+    // SMTP (Jakarta Mail)
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    implementation("com.sun.activation:jakarta.activation:2.0.1")
 }

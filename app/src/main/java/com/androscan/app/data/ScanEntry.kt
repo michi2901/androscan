@@ -8,5 +8,6 @@ data class ScanEntry(
     @PrimaryKey val id: String,
     val barcode: String,
     val articleCode: String,
-    val capturedAt: Long
+    val capturedAt: Long,
+    val sentByMail: Boolean = false
 )

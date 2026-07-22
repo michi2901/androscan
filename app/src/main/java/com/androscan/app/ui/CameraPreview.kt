@@ -1,11 +1,6 @@
 package com.androscan.app.ui
 
-import android.content.Context
 import android.graphics.Rect
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.util.Log
 import android.util.Size
 import androidx.camera.core.CameraSelector
@@ -35,6 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.androscan.app.util.EartagCheckDigit
+import com.androscan.app.util.ScanFeedback
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -45,24 +42,25 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "CameraPreview"
-private const val DEBOUNCE_MS = 1500L
+private const val SCAN_COOLDOWN_MS = 2000L
 private val PREVIEW_HEIGHT_DP = 150.dp
 
 @Composable
 fun CameraPreview(
     enabled: Boolean,
     onBarcodeDetected: (String) -> Unit,
+    onScanError: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val scanning = remember { AtomicBoolean(false) }
-    val lastValue = remember { AtomicLong(0L) }
-    val lastCode = remember { AtomicReference<String?>(null) }
+    val nextScanAllowedAt = remember { AtomicLong(0L) }
     val acceptScans = remember { AtomicBoolean(enabled) }
     acceptScans.set(enabled)
     val latestCallback = rememberUpdatedState(onBarcodeDetected)
+    val latestError = rememberUpdatedState(onScanError)
     val viewSize = remember { AtomicReference(Size(0, 0)) }
 
     val previewView = remember {
@@ -137,11 +135,15 @@ fun CameraPreview(
                 scanner.process(input)
                     .addOnSuccessListener { barcodes ->
                         if (!acceptScans.get()) return@addOnSuccessListener
+                        val now = System.currentTimeMillis()
+                        if (now < nextScanAllowedAt.get()) return@addOnSuccessListener
+
                         val view = viewSize.get()
-                        val match = barcodes.firstOrNull { barcode ->
-                            val raw = barcode.rawValue?.trim().orEmpty()
-                            raw.isNotEmpty() &&
-                                isAcceptedBarcodeValue(raw) &&
+                        val candidate = barcodes.firstOrNull { barcode ->
+                            val payload = stripLeading251(
+                                normalizeBarcodeValue(barcode.rawValue?.trim().orEmpty())
+                            )
+                            payload.isNotEmpty() &&
                                 isFullyInsidePreview(
                                     boundingBox = barcode.boundingBox,
                                     imageProxy = imageProxy,
@@ -151,15 +153,24 @@ fun CameraPreview(
                                 )
                         } ?: return@addOnSuccessListener
 
-                        val raw = match.rawValue?.trim().orEmpty()
-                        val now = System.currentTimeMillis()
-                        val previous = lastCode.get()
-                        val elapsed = now - lastValue.get()
-                        if (raw != previous || elapsed >= DEBOUNCE_MS) {
-                            lastCode.set(raw)
-                            lastValue.set(now)
-                            vibrate(context)
-                            latestCallback.value(raw)
+                        val payload = stripLeading251(
+                            normalizeBarcodeValue(candidate.rawValue?.trim().orEmpty())
+                        )
+                        when (val result = EartagCheckDigit.validate(payload)) {
+                            is EartagCheckDigit.ValidationResult.Valid -> {
+                                nextScanAllowedAt.set(now + SCAN_COOLDOWN_MS)
+                                ScanFeedback.peep()
+                                ScanFeedback.vibrateOnce(context)
+                                latestCallback.value(payload)
+                            }
+                            is EartagCheckDigit.ValidationResult.InvalidLength,
+                            is EartagCheckDigit.ValidationResult.InvalidCheckDigit -> {
+                                nextScanAllowedAt.set(now + SCAN_COOLDOWN_MS)
+                                result.errorMessage?.let { latestError.value(it) }
+                            }
+                            is EartagCheckDigit.ValidationResult.Unsupported -> {
+                                // ignore unrelated barcodes
+                            }
                         }
                     }
                     .addOnFailureListener { e ->
@@ -212,11 +223,23 @@ fun CameraPreview(
     }
 }
 
-/** Accept codes starting with 251, or whose first two characters are both non-digits. */
+/** Strip AIM symbology prefix "]C1" before validation / storage. */
+internal fun normalizeBarcodeValue(value: String): String {
+    return if (value.startsWith("]C1")) value.drop(3) else value
+}
+
+/** After a successful scan, remove leading GS1 AI "251" (source entity / eartag). */
+internal fun stripLeading251(value: String): String {
+    return if (value.startsWith("251")) value.drop(3) else value
+}
+
+/**
+ * Accept supported cattle eartags (HU, CZ, SK, SI, PL, RO, DE, AT),
+ * optionally prefixed with GS1 AI 251.
+ */
 internal fun isAcceptedBarcodeValue(value: String): Boolean {
-    if (value.startsWith("251")) return true
-    if (value.length < 2) return false
-    return !value[0].isDigit() && !value[1].isDigit()
+    val payload = stripLeading251(value)
+    return EartagCheckDigit.validate(payload) is EartagCheckDigit.ValidationResult.Valid
 }
 
 /**
@@ -270,25 +293,3 @@ internal fun isFullyInsidePreview(
         boundingBox.bottom <= cropBottom
 }
 
-@Suppress("DEPRECATION")
-private fun vibrate(context: Context) {
-    try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val manager = context.getSystemService(VibratorManager::class.java)
-            manager?.defaultVibrator?.vibrate(
-                VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE)
-            )
-        } else {
-            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(
-                    VibrationEffect.createOneShot(40, VibrationEffect.DEFAULT_AMPLITUDE)
-                )
-            } else {
-                vibrator?.vibrate(40)
-            }
-        }
-    } catch (_: Exception) {
-        // ignore missing vibrator
-    }
-}

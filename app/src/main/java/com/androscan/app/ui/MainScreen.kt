@@ -2,10 +2,12 @@ package com.androscan.app.ui
 
 import android.Manifest
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,31 +17,23 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -58,14 +52,15 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MainScreen(viewModel: ScanViewModel) {
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val pending by viewModel.pendingBarcode.collectAsStateWithLifecycle()
+    val scanReady by viewModel.scanReady.collectAsStateWithLifecycle()
+    val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    var showClearDialog by remember { mutableStateOf(false) }
 
     val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
 
@@ -83,15 +78,6 @@ fun MainScreen(viewModel: ScanViewModel) {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Androscan", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            )
-        },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(
@@ -102,11 +88,22 @@ fun MainScreen(viewModel: ScanViewModel) {
         ) {
             when {
                 cameraPermission.status.isGranted -> {
-                    CameraPreview(
-                        enabled = pending == null,
-                        onBarcodeDetected = viewModel::onBarcodeDetected,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        CameraPreview(
+                            enabled = pending == null && scanReady,
+                            onBarcodeDetected = viewModel::onBarcodeDetected,
+                            onScanError = viewModel::onScanError,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        StatusBanner(
+                            pendingBarcode = pending,
+                            onCancel = viewModel::clearPending,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .fillMaxWidth()
+                                .padding(8.dp)
+                        )
+                    }
                 }
                 cameraPermission.status.shouldShowRationale -> {
                     PermissionCard(
@@ -124,13 +121,6 @@ fun MainScreen(viewModel: ScanViewModel) {
 
             Spacer(Modifier.height(10.dp))
 
-            StatusBanner(
-                pendingBarcode = pending,
-                onCancel = viewModel::clearPending
-            )
-
-            Spacer(Modifier.height(10.dp))
-
             ArticleGrid(
                 enabled = pending != null,
                 onArticleClick = viewModel::confirmArticle
@@ -138,39 +128,17 @@ fun MainScreen(viewModel: ScanViewModel) {
 
             Spacer(Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Button(
+                onClick = { viewModel.sendMail() },
+                enabled = entries.isNotEmpty() && !isSending,
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Button(
-                    onClick = { viewModel.shareCsv() },
-                    enabled = entries.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Email, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Per Mail senden")
-                }
-                OutlinedButton(
-                    onClick = { showClearDialog = true },
-                    enabled = entries.isNotEmpty(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Liste leeren")
-                }
+                Icon(Icons.Default.Email, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isSending) "Sende per SMTP…" else "Per SMTP senden")
             }
 
             Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = "Erfasste Einträge (${entries.size})",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Spacer(Modifier.height(4.dp))
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -182,25 +150,6 @@ fun MainScreen(viewModel: ScanViewModel) {
                 }
             }
         }
-    }
-
-    if (showClearDialog) {
-        AlertDialog(
-            onDismissRequest = { showClearDialog = false },
-            title = { Text("Liste leeren?") },
-            text = { Text("Alle erfassten Einträge werden unwiderruflich gelöscht.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showClearDialog = false
-                        viewModel.clearAll()
-                    }
-                ) { Text("Leeren") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showClearDialog = false }) { Text("Abbrechen") }
-            }
-        )
     }
 }
 
@@ -231,19 +180,20 @@ private fun PermissionCard(text: String, onRequest: () -> Unit) {
 @Composable
 private fun StatusBanner(
     pendingBarcode: String?,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (pendingBarcode != null) {
-                MaterialTheme.colorScheme.secondaryContainer
+                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f)
             } else {
-                MaterialTheme.colorScheme.surfaceVariant
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
             }
         )
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             if (pendingBarcode != null) {
                 Text(
                     text = "Barcode erfasst – bitte Kachel wählen",
@@ -259,7 +209,8 @@ private fun StatusBanner(
                 )
                 TextButton(
                     onClick = onCancel,
-                    modifier = Modifier.align(Alignment.End)
+                    modifier = Modifier.align(Alignment.End),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text("Abbrechen")
                 }
@@ -267,7 +218,9 @@ private fun StatusBanner(
                 Text(
                     text = "Bitte Barcode scannen",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -291,7 +244,8 @@ private fun ArticleGrid(
                         enabled = enabled,
                         modifier = Modifier
                             .weight(1f)
-                            .height(64.dp),
+                            .aspectRatio(1f),
+                        contentPadding = PaddingValues(0.dp),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
@@ -322,13 +276,27 @@ private fun EntryRow(entry: ScanEntry) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = entry.articleCode,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = entry.articleCode,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (entry.sentByMail) {
+                        Text(
+                            text = "Gesendet",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
+                }
                 Text(
                     text = time,
                     style = MaterialTheme.typography.labelMedium,
