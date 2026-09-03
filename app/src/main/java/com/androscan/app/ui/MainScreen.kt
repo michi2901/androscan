@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.Button
@@ -25,19 +27,27 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,13 +66,16 @@ import java.util.Locale
 @Composable
 fun MainScreen(viewModel: ScanViewModel) {
     val entries by viewModel.entries.collectAsStateWithLifecycle()
-    val pending by viewModel.pendingBarcode.collectAsStateWithLifecycle()
+    val selectedColdRoom by viewModel.selectedColdRoom.collectAsStateWithLifecycle()
+    val selectedArticle by viewModel.selectedArticle.collectAsStateWithLifecycle()
     val scanReady by viewModel.scanReady.collectAsStateWithLifecycle()
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    var selectedTab by remember { mutableIntStateOf(0) }
 
     val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
+    val canScan = selectedColdRoom != null && selectedArticle != null
 
     LaunchedEffect(message) {
         message?.let {
@@ -71,8 +84,8 @@ fun MainScreen(viewModel: ScanViewModel) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (!cameraPermission.status.isGranted) {
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 2 && !cameraPermission.status.isGranted) {
             cameraPermission.launchPermissionRequest()
         }
     }
@@ -84,70 +97,333 @@ fun MainScreen(viewModel: ScanViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
         ) {
-            when {
-                cameraPermission.status.isGranted -> {
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        CameraPreview(
-                            enabled = pending == null && scanReady,
-                            onBarcodeDetected = viewModel::onBarcodeDetected,
-                            onScanError = viewModel::onScanError,
-                            modifier = Modifier.fillMaxWidth()
+            TabRow(selectedTabIndex = selectedTab) {
+                Tab(
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    text = {
+                        TabCaption(
+                            title = "Kühlraum",
+                            selection = selectedColdRoom
                         )
-                        StatusBanner(
-                            pendingBarcode = pending,
-                            onCancel = viewModel::clearPending,
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .fillMaxWidth()
-                                .padding(8.dp)
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    text = {
+                        TabCaption(
+                            title = "Artikel",
+                            selection = selectedArticle
+                        )
+                    }
+                )
+                Tab(
+                    selected = selectedTab == 2,
+                    onClick = { selectedTab = 2 },
+                    text = {
+                        TabCaption(
+                            title = "Scannen",
+                            selection = when {
+                                canScan -> "${selectedArticle}/${selectedColdRoom}"
+                                else -> null
+                            }
+                        )
+                    }
+                )
+            }
+
+            when (selectedTab) {
+                0 -> SelectionTab(
+                    title = "Kühlraum wählen",
+                    options = COLD_ROOMS,
+                    selected = selectedColdRoom,
+                    onSelect = viewModel::selectColdRoom,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                )
+                1 -> SelectionTab(
+                    title = "Artikel wählen",
+                    options = ARTICLE_CODES,
+                    selected = selectedArticle,
+                    onSelect = viewModel::selectArticle,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                )
+                else -> ScanTab(
+                    canScan = canScan,
+                    scanReady = scanReady,
+                    selectedColdRoom = selectedColdRoom,
+                    selectedArticle = selectedArticle,
+                    entries = entries,
+                    isSending = isSending,
+                    cameraGranted = cameraPermission.status.isGranted,
+                    showRationale = cameraPermission.status.shouldShowRationale,
+                    onRequestCamera = { cameraPermission.launchPermissionRequest() },
+                    onBarcodeDetected = viewModel::onBarcodeDetected,
+                    onScanError = viewModel::onScanError,
+                    onManualSubmit = viewModel::submitManualBarcode,
+                    onSendMail = viewModel::sendMail,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(12.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabCaption(title: String, selection: String?) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelLarge
+        )
+        Text(
+            text = selection ?: "—",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = if (selection != null) FontWeight.Bold else FontWeight.Normal,
+            color = if (selection != null) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+    }
+}
+
+@Composable
+private fun SelectionTab(
+    title: String,
+    options: List<String>,
+    selected: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(12.dp))
+        SelectionGrid(
+            options = options,
+            selected = selected,
+            onSelect = onSelect
+        )
+    }
+}
+
+@Composable
+private fun SelectionGrid(
+    options: List<String>,
+    selected: String?,
+    onSelect: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.chunked(2).forEach { row ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                row.forEach { code ->
+                    val isSelected = code == selected
+                    Button(
+                        onClick = { onSelect(code) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(1f),
+                        contentPadding = PaddingValues(4.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isSelected) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            contentColor = if (isSelected) {
+                                MaterialTheme.colorScheme.onSecondary
+                            } else {
+                                MaterialTheme.colorScheme.onPrimary
+                            }
+                        )
+                    ) {
+                        Text(
+                            text = code,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
-                cameraPermission.status.shouldShowRationale -> {
-                    PermissionCard(
-                        text = "Kamerazugriff wird für das Barcode-Scannen benötigt.",
-                        onRequest = { cameraPermission.launchPermissionRequest() }
-                    )
-                }
-                else -> {
-                    PermissionCard(
-                        text = "Bitte Kameraberechtigung in den Systemeinstellungen erlauben.",
-                        onRequest = { cameraPermission.launchPermissionRequest() }
-                    )
+                if (row.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
+        }
+    }
+}
 
+@Composable
+private fun ScanTab(
+    canScan: Boolean,
+    scanReady: Boolean,
+    selectedColdRoom: String?,
+    selectedArticle: String?,
+    entries: List<ScanEntry>,
+    isSending: Boolean,
+    cameraGranted: Boolean,
+    showRationale: Boolean,
+    onRequestCamera: () -> Unit,
+    onBarcodeDetected: (String) -> Unit,
+    onScanError: (String) -> Unit,
+    onManualSubmit: (String) -> Unit,
+    onSendMail: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var manualInput by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+
+    Column(modifier = modifier) {
+        if (!canScan) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Text(
+                    text = "Bitte zuerst Kühlraum und Artikel wählen.",
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
             Spacer(Modifier.height(10.dp))
-
-            ArticleGrid(
-                enabled = pending != null,
-                onArticleClick = viewModel::confirmArticle
+        } else {
+            Text(
+                text = "Stapel: $selectedArticle · $selectedColdRoom",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary
             )
-
-            Spacer(Modifier.height(12.dp))
-
-            Button(
-                onClick = { viewModel.sendMail() },
-                enabled = entries.isNotEmpty() && !isSending,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Email, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text(if (isSending) "Sende per SMTP…" else "Per SMTP senden")
-            }
-
             Spacer(Modifier.height(8.dp))
+        }
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(entries, key = { it.id }) { entry ->
-                    EntryRow(entry)
+        when {
+            !canScan -> {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Scannen gesperrt",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            }
+            cameraGranted -> {
+                CameraPreview(
+                    enabled = scanReady && canScan,
+                    onBarcodeDetected = onBarcodeDetected,
+                    onScanError = onScanError,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            showRationale -> {
+                PermissionCard(
+                    text = "Kamerazugriff wird für das Barcode-Scannen benötigt.",
+                    onRequest = onRequestCamera
+                )
+            }
+            else -> {
+                PermissionCard(
+                    text = "Bitte Kameraberechtigung in den Systemeinstellungen erlauben.",
+                    onRequest = onRequestCamera
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        OutlinedTextField(
+            value = manualInput,
+            onValueChange = { manualInput = it.uppercase() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = canScan && scanReady,
+            label = { Text("Ohrmarke manuell") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                imeAction = ImeAction.Done
+            ),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    val value = manualInput.trim()
+                    if (value.isNotEmpty()) {
+                        onManualSubmit(value)
+                        manualInput = ""
+                        focusManager.clearFocus()
+                    }
+                }
+            )
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = {
+                val value = manualInput.trim()
+                if (value.isNotEmpty()) {
+                    onManualSubmit(value)
+                    manualInput = ""
+                    focusManager.clearFocus()
+                }
+            },
+            enabled = canScan && scanReady && manualInput.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Manuell erfassen")
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Button(
+            onClick = onSendMail,
+            enabled = entries.isNotEmpty() && !isSending,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.Email, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text(if (isSending) "Sende per SMTP…" else "Per SMTP senden")
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Text(
+            text = "Erfasste Einträge (${entries.size})",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(Modifier.height(4.dp))
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 16.dp)
+        ) {
+            items(entries, key = { it.id }) { entry ->
+                EntryRow(entry)
             }
         }
     }
@@ -178,93 +454,6 @@ private fun PermissionCard(text: String, onRequest: () -> Unit) {
 }
 
 @Composable
-private fun StatusBanner(
-    pendingBarcode: String?,
-    onCancel: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(
-            containerColor = if (pendingBarcode != null) {
-                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f)
-            } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
-            }
-        )
-    ) {
-        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-            if (pendingBarcode != null) {
-                Text(
-                    text = "Barcode erfasst – bitte Kachel wählen",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = pendingBarcode,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                TextButton(
-                    onClick = onCancel,
-                    modifier = Modifier.align(Alignment.End),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text("Abbrechen")
-                }
-            } else {
-                Text(
-                    text = "Bitte Barcode scannen",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ArticleGrid(
-    enabled: Boolean,
-    onArticleClick: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ARTICLE_CODES.chunked(2).forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                row.forEach { code ->
-                    Button(
-                        onClick = { onArticleClick(code) },
-                        enabled = enabled,
-                        modifier = Modifier
-                            .weight(1f)
-                            .aspectRatio(1f),
-                        contentPadding = PaddingValues(0.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
-                        Text(
-                            text = code,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun EntryRow(entry: ScanEntry) {
     val time = remember(entry.capturedAt) {
         SimpleDateFormat("dd.MM.yyyy HH:mm:ss", Locale.GERMANY).format(Date(entry.capturedAt))
@@ -287,6 +476,11 @@ private fun EntryRow(entry: ScanEntry) {
                         text = entry.articleCode,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = entry.coldRoom,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.secondary
                     )
                     if (entry.sentByMail) {
                         Text(

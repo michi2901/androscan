@@ -25,8 +25,8 @@ android {
         applicationId = "com.androscan.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField(
@@ -92,6 +92,11 @@ android {
             pickFirsts += "META-INF/NOTICE.md"
         }
     }
+}
+
+// APK/AAB base name: androscan-debug.aab / androscan-release.aab
+base {
+    archivesName.set("androscan")
 }
 
 dependencies {

@@ -17,7 +17,7 @@ object CsvExporter {
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(context.cacheDir, "androscan_export_$stamp.csv")
         file.bufferedWriter(Charsets.UTF_8).use { writer ->
-            writer.appendLine("id,capturedAt,barcode,articleCode")
+            writer.appendLine("id,capturedAt,barcode,articleCode,coldRoom")
             entries.sortedBy { it.capturedAt }.forEach { entry ->
                 val iso = isoFormatter.format(Date(entry.capturedAt))
                 writer.appendLine(
@@ -25,7 +25,8 @@ object CsvExporter {
                         escape(entry.id),
                         escape(iso),
                         escape(entry.barcode),
-                        escape(entry.articleCode)
+                        escape(entry.articleCode),
+                        escape(entry.coldRoom)
                     ).joinToString(",")
                 )
             }

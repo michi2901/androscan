@@ -10,6 +10,7 @@ import com.androscan.app.data.ScanEntry
 import com.androscan.app.data.ScanRepository
 import com.androscan.app.export.CsvExporter
 import com.androscan.app.export.MailSender
+import com.androscan.app.util.EartagCheckDigit
 import com.androscan.app.util.IdGenerator
 import com.androscan.app.util.ScanFeedback
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
-val ARTICLE_CODES = listOf("1VMP", "1VOP", "1PL", "1PI", "1KN", "1EN")
+val COLD_ROOMS = listOf("E-13", "E-14", "NB-E-15", "NB-E16", "HÄLFTEN")
+val ARTICLE_CODES = listOf("1VMP", "1VOP", "1PL", "1PI", "1KN", "1EN", "1H")
 
 private val ENTRY_TTL_MS = TimeUnit.HOURS.toMillis(48)
 private val CLEANUP_INTERVAL_MS = TimeUnit.MINUTES.toMillis(15)
@@ -38,8 +40,11 @@ class ScanViewModel(
     val entries: StateFlow<List<ScanEntry>> = repository.getAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private val _pendingBarcode = MutableStateFlow<String?>(null)
-    val pendingBarcode: StateFlow<String?> = _pendingBarcode.asStateFlow()
+    private val _selectedColdRoom = MutableStateFlow<String?>(null)
+    val selectedColdRoom: StateFlow<String?> = _selectedColdRoom.asStateFlow()
+
+    private val _selectedArticle = MutableStateFlow<String?>(null)
+    val selectedArticle: StateFlow<String?> = _selectedArticle.asStateFlow()
 
     private val _scanReady = MutableStateFlow(true)
     val scanReady: StateFlow<Boolean> = _scanReady.asStateFlow()
@@ -50,6 +55,9 @@ class ScanViewModel(
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    val canScan: Boolean
+        get() = _selectedColdRoom.value != null && _selectedArticle.value != null
+
     init {
         viewModelScope.launch {
             while (isActive) {
@@ -59,26 +67,55 @@ class ScanViewModel(
         }
     }
 
+    fun selectColdRoom(coldRoom: String) {
+        _selectedColdRoom.value = coldRoom
+    }
+
+    fun selectArticle(articleCode: String) {
+        _selectedArticle.value = articleCode
+    }
+
     fun onBarcodeDetected(barcode: String) {
-        if (_pendingBarcode.value == null && _scanReady.value) {
-            _pendingBarcode.value = barcode
-        }
+        if (!_scanReady.value || !canScan) return
+        saveScan(barcode)
     }
 
     fun onScanError(message: String) {
-        if (_pendingBarcode.value == null && _scanReady.value) {
+        if (_scanReady.value && canScan) {
             _message.value = message
         }
     }
 
-    fun clearPending() {
-        _pendingBarcode.value = null
+    fun submitManualBarcode(raw: String) {
+        if (!_scanReady.value || !canScan) {
+            _message.value = "Bitte zuerst Kühlraum und Artikel wählen"
+            return
+        }
+        val payload = prepareBarcodePayload(raw)
+        if (payload.isBlank()) {
+            _message.value = "Leere Ohrmarke"
+            return
+        }
+        if (!hasAtLeastTwoNonNumericChars(payload)) {
+            _message.value = "Ungültige Ohrmarke (Ländercode fehlt)"
+            return
+        }
+        when (val result = EartagCheckDigit.validate(payload)) {
+            is EartagCheckDigit.ValidationResult.Valid -> saveScan(payload)
+            is EartagCheckDigit.ValidationResult.InvalidLength,
+            is EartagCheckDigit.ValidationResult.InvalidCheckDigit -> {
+                _message.value = result.errorMessage ?: "Ungültige Ohrmarke"
+            }
+            is EartagCheckDigit.ValidationResult.Unsupported -> {
+                _message.value = "Ohrmarke nicht erkannt"
+            }
+        }
     }
 
-    fun confirmArticle(articleCode: String) {
-        val barcode = _pendingBarcode.value ?: return
+    private fun saveScan(barcode: String) {
+        val article = _selectedArticle.value ?: return
+        val coldRoom = _selectedColdRoom.value ?: return
         if (!hasNonNumericCountryPrefix(barcode)) {
-            _pendingBarcode.value = null
             _scanReady.value = false
             _message.value = "Ländercode fehlt (erste 2 Zeichen müssen Buchstaben sein)"
             viewModelScope.launch {
@@ -88,20 +125,20 @@ class ScanViewModel(
             return
         }
         viewModelScope.launch {
+            _scanReady.value = false
             val now = System.currentTimeMillis()
             val entry = ScanEntry(
                 id = IdGenerator.create(getApplication(), now),
                 barcode = barcode,
-                articleCode = articleCode,
+                articleCode = article,
+                coldRoom = coldRoom,
                 capturedAt = now,
                 sentByMail = false
             )
             repository.insert(entry)
-            _pendingBarcode.value = null
-            _scanReady.value = false
             ScanFeedback.doublePeep()
             ScanFeedback.vibrateDouble(getApplication())
-            _message.value = "$articleCode erfasst"
+            _message.value = "$article / $coldRoom erfasst"
             delay(POST_SAVE_COOLDOWN_MS)
             _scanReady.value = true
         }
