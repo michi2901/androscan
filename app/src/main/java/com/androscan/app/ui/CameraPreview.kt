@@ -30,9 +30,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.androscan.app.util.EartagCheckDigit
@@ -71,8 +74,14 @@ fun CameraPreview(
 
     val previewView = remember {
         PreviewView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
             scaleType = PreviewView.ScaleType.FILL_CENTER
+            // TextureView — respects Compose clipping (unlike SurfaceView).
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            clipToOutline = true
             addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
                 viewSize.set(Size(right - left, bottom - top))
             }
@@ -235,6 +244,7 @@ fun CameraPreview(
         modifier = modifier
             .fillMaxWidth()
             .height(PREVIEW_HEIGHT_DP)
+            .clip(RoundedCornerShape(8.dp))
             .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center
     ) {
@@ -243,6 +253,7 @@ fun CameraPreview(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(2.dp)
+                .clip(RoundedCornerShape(6.dp))
         )
     }
 }

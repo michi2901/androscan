@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -134,43 +135,51 @@ fun MainScreen(viewModel: ScanViewModel) {
                 )
             }
 
-            when (selectedTab) {
-                0 -> SelectionTab(
-                    title = "Kühlraum wählen",
-                    options = COLD_ROOMS,
-                    selected = selectedColdRoom,
-                    onSelect = viewModel::selectColdRoom,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                )
-                1 -> SelectionTab(
-                    title = "Artikel wählen",
-                    options = ARTICLE_CODES,
-                    selected = selectedArticle,
-                    onSelect = viewModel::selectArticle,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                )
-                else -> ScanTab(
-                    canScan = canScan,
-                    scanReady = scanReady,
-                    selectedColdRoom = selectedColdRoom,
-                    selectedArticle = selectedArticle,
-                    entries = entries,
-                    isSending = isSending,
-                    cameraGranted = cameraPermission.status.isGranted,
-                    showRationale = cameraPermission.status.shouldShowRationale,
-                    onRequestCamera = { cameraPermission.launchPermissionRequest() },
-                    onBarcodeDetected = viewModel::onBarcodeDetected,
-                    onScanError = viewModel::onScanError,
-                    onManualSubmit = viewModel::submitManualBarcode,
-                    onSendMail = viewModel::sendMail,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp)
-                )
+            // Clip tab content so PreviewView cannot draw over TabRow.
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clipToBounds()
+            ) {
+                when (selectedTab) {
+                    0 -> SelectionTab(
+                        title = "Kühlraum wählen",
+                        options = COLD_ROOMS,
+                        selected = selectedColdRoom,
+                        onSelect = viewModel::selectColdRoom,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    )
+                    1 -> SelectionTab(
+                        title = "Artikel wählen",
+                        options = ARTICLE_CODES,
+                        selected = selectedArticle,
+                        onSelect = viewModel::selectArticle,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    )
+                    else -> ScanTab(
+                        canScan = canScan,
+                        scanReady = scanReady,
+                        selectedColdRoom = selectedColdRoom,
+                        selectedArticle = selectedArticle,
+                        entries = entries,
+                        isSending = isSending,
+                        cameraGranted = cameraPermission.status.isGranted,
+                        showRationale = cameraPermission.status.shouldShowRationale,
+                        onRequestCamera = { cameraPermission.launchPermissionRequest() },
+                        onBarcodeDetected = viewModel::onBarcodeDetected,
+                        onScanError = viewModel::onScanError,
+                        onManualSubmit = viewModel::submitManualBarcode,
+                        onSendMail = viewModel::sendMail,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(12.dp)
+                    )
+                }
             }
         }
     }
@@ -418,7 +427,9 @@ private fun ScanTab(
         Spacer(Modifier.height(4.dp))
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {

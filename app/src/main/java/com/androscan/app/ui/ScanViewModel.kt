@@ -10,7 +10,6 @@ import com.androscan.app.data.ScanEntry
 import com.androscan.app.data.ScanRepository
 import com.androscan.app.export.CsvExporter
 import com.androscan.app.export.MailSender
-import com.androscan.app.util.EartagCheckDigit
 import com.androscan.app.util.IdGenerator
 import com.androscan.app.util.ScanFeedback
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
-val COLD_ROOMS = listOf("E-13", "E-14", "NB-E-15", "NB-E16", "HÄLFTEN")
+val COLD_ROOMS = listOf("E-13", "E-16", "NB-E-05", "NB-E-15", "HÄLFTE")
 val ARTICLE_CODES = listOf("1VMP", "1VOP", "1PL", "1PI", "1KN", "1EN", "1H")
 
 private val ENTRY_TTL_MS = TimeUnit.HOURS.toMillis(48)
@@ -91,31 +90,19 @@ class ScanViewModel(
             _message.value = "Bitte zuerst Kühlraum und Artikel wählen"
             return
         }
-        val payload = prepareBarcodePayload(raw)
-        if (payload.isBlank()) {
+        val value = raw.trim()
+        if (value.isBlank()) {
             _message.value = "Leere Ohrmarke"
             return
         }
-        if (!hasAtLeastTwoNonNumericChars(payload)) {
-            _message.value = "Ungültige Ohrmarke (Ländercode fehlt)"
-            return
-        }
-        when (val result = EartagCheckDigit.validate(payload)) {
-            is EartagCheckDigit.ValidationResult.Valid -> saveScan(payload)
-            is EartagCheckDigit.ValidationResult.InvalidLength,
-            is EartagCheckDigit.ValidationResult.InvalidCheckDigit -> {
-                _message.value = result.errorMessage ?: "Ungültige Ohrmarke"
-            }
-            is EartagCheckDigit.ValidationResult.Unsupported -> {
-                _message.value = "Ohrmarke nicht erkannt"
-            }
-        }
+        // Manual entry: store as typed, no eartag validation.
+        saveScan(value, validate = false)
     }
 
-    private fun saveScan(barcode: String) {
+    private fun saveScan(barcode: String, validate: Boolean = true) {
         val article = _selectedArticle.value ?: return
         val coldRoom = _selectedColdRoom.value ?: return
-        if (!hasNonNumericCountryPrefix(barcode)) {
+        if (validate && !hasNonNumericCountryPrefix(barcode)) {
             _scanReady.value = false
             _message.value = "Ländercode fehlt (erste 2 Zeichen müssen Buchstaben sein)"
             viewModelScope.launch {
